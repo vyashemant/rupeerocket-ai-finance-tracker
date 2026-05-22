@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react'
-import api from '../lib/api'
 import { clearAuthToken, getAuthToken, setAuthToken } from '../lib/storage'
+import { getProfileRequest, loginRequest, registerRequest } from '../services/auth'
 
 const AuthContext = createContext(null)
 
@@ -16,8 +16,8 @@ export function AuthProvider({ children }) {
     }
 
     try {
-      const response = await api.get('/api/auth/me')
-      setUser(response.data.data.user)
+      const profile = await getProfileRequest()
+      setUser(profile?.user || profile)
     } catch (error) {
       clearAuthToken()
       setUser(null)
@@ -31,16 +31,14 @@ export function AuthProvider({ children }) {
   }, [])
 
   const login = async (email, password) => {
-    const response = await api.post('/api/auth/login', { email, password })
-    const { token, user: nextUser } = response.data.data
+    const { token, user: nextUser } = await loginRequest({ email, password })
     setAuthToken(token)
     setUser(nextUser)
     return nextUser
   }
 
   const register = async (payload) => {
-    const response = await api.post('/api/auth/register', payload)
-    const { token, user: nextUser } = response.data.data
+    const { token, user: nextUser } = await registerRequest(payload)
     setAuthToken(token)
     setUser(nextUser)
     return nextUser

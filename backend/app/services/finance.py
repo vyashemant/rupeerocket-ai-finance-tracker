@@ -8,18 +8,15 @@ from app.models import Category, Transaction
 
 
 DEFAULT_CATEGORIES = [
-    ("Salary", "#16a34a"),
-    ("Freelance", "#0ea5e9"),
-    ("Investments", "#8b5cf6"),
-    ("Rent", "#ef4444"),
-    ("Groceries", "#f59e0b"),
-    ("Transport", "#14b8a6"),
-    ("Dining", "#ec4899"),
-    ("Bills", "#6366f1"),
+    ("Food", "#f59e0b"),
+    ("Travel", "#14b8a6"),
     ("Shopping", "#f97316"),
+    ("Bills", "#6366f1"),
+    ("Entertainment", "#ec4899"),
     ("Health", "#22c55e"),
-    ("Travel", "#06b6d4"),
-    ("Savings", "#84cc16"),
+    ("Education", "#0ea5e9"),
+    ("Salary", "#16a34a"),
+    ("Investments", "#8b5cf6"),
     ("Other", "#64748b"),
 ]
 
@@ -33,6 +30,10 @@ def ensure_default_categories(user_id):
             added = True
     if added:
         db.session.commit()
+
+
+def get_default_category_names():
+    return [name for name, _color in DEFAULT_CATEGORIES]
 
 
 def monthly_bounds(target_date=None):

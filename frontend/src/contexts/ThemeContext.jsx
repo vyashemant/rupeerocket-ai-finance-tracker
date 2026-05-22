@@ -8,9 +8,19 @@ function applyTheme(theme) {
   root.classList.toggle('dark', theme === 'dark')
 }
 
+function getInitialTheme() {
+  const storedTheme = getStoredTheme()
+  if (storedTheme) {
+    return storedTheme
+  }
+  if (typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+    return 'dark'
+  }
+  return 'light'
+}
+
 export function ThemeProvider({ children }) {
-  const initialTheme = getStoredTheme() || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
-  const [theme, setTheme] = useState(initialTheme)
+  const [theme, setTheme] = useState(getInitialTheme)
 
   useEffect(() => {
     applyTheme(theme)

@@ -1,9 +1,10 @@
 from flask import Flask, jsonify
+from sqlalchemy import inspect, text
 
 from app.config import Config
 from app.extensions import cors, db, jwt, migrate
 from app.models import User
-from app.routes import ai_bp, analytics_bp, auth_bp, categories_bp, dashboard_bp, transactions_bp
+from app.routes import ai_bp, analytics_bp, auth_bp, categories_bp, dashboard_bp, receipts_bp, transactions_bp
 
 
 def create_app(config_object=Config):
@@ -28,7 +29,15 @@ def create_app(config_object=Config):
 
     with app.app_context():
         if app.config["AUTO_CREATE_TABLES"]:
-            db.create_all()
+            try:
+                db.create_all()
+            except Exception:
+                # ignore create errors for existing tables in dev
+                pass
+            try:
+                sync_transaction_ai_columns()
+            except Exception:
+                pass
 
     @app.get("/api/health")
     def health():
@@ -44,6 +53,7 @@ def register_blueprints(app):
     app.register_blueprint(dashboard_bp)
     app.register_blueprint(analytics_bp)
     app.register_blueprint(ai_bp)
+    app.register_blueprint(receipts_bp)
 
 
 def register_jwt_handlers(app):
@@ -87,3 +97,23 @@ def register_shell_context(app):
     @app.shell_context_processor
     def make_shell_context():
         return {"db": db, "User": User}
+
+
+def sync_transaction_ai_columns():
+    inspector = inspect(db.engine)
+    if "transactions" not in inspector.get_table_names():
+        return
+
+    existing_columns = {column["name"] for column in inspector.get_columns("transactions")}
+    statements = {
+        "ai_category_name": "ALTER TABLE transactions ADD COLUMN ai_category_name VARCHAR(80)",
+        "ai_category_confidence": "ALTER TABLE transactions ADD COLUMN ai_category_confidence FLOAT",
+        "ai_category_source": "ALTER TABLE transactions ADD COLUMN ai_category_source VARCHAR(32)",
+        "ai_category_provider": "ALTER TABLE transactions ADD COLUMN ai_category_provider VARCHAR(64)",
+        "ai_category_reason": "ALTER TABLE transactions ADD COLUMN ai_category_reason TEXT",
+    }
+
+    with db.engine.begin() as connection:
+        for column_name, ddl in statements.items():
+            if column_name not in existing_columns:
+                connection.execute(text(ddl))

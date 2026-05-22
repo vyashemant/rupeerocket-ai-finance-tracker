@@ -11,3 +11,34 @@ frontend/node_modules/
 frontend/dist/
 .DS_Store
 *.log
+
+# IDE / editor
+.vscode/
+.idea/
+
+# Python artifacts
+*.pyc
+__pycache__/
+*.pyo
+*.pyd
+.Python
+
+# Environment files
+.env
+.env.*
+.env.local
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Temporary receipts and uploads
+rupeerocket_receipts_*
+backend/uploads/
+backend/tmp_receipts/
+backend/instance/receipts/
+
+# Build artifacts
+frontend/.cache/
+node_modules/

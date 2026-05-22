@@ -3,6 +3,7 @@ from app.routes.analytics import analytics_bp
 from app.routes.auth import auth_bp
 from app.routes.categories import categories_bp
 from app.routes.dashboard import dashboard_bp
+from app.routes.receipts import receipts_bp
 from app.routes.transactions import transactions_bp
 
 
@@ -13,4 +14,5 @@ __all__ = [
     "dashboard_bp",
     "analytics_bp",
     "ai_bp",
+    "receipts_bp",
 ]

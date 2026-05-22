@@ -3,8 +3,11 @@ from datetime import datetime
 from flask import Blueprint, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
 
+from app.middleware.validators import validate_json
 from app.extensions import db
 from app.models import Category, Transaction
+from app.services.ai_service import predict_transaction_category
+from app.services.finance import ensure_default_categories
 from app.utils.http import api_error, api_response
 from app.utils.security import parse_decimal
 
@@ -31,6 +34,7 @@ def list_transactions():
 
 @transactions_bp.post("")
 @jwt_required()
+@validate_json(["title", "amount", "type", "date"])
 def create_transaction():
     user_id = int(get_jwt_identity())
     payload = request.get_json(silent=True) or {}
@@ -52,11 +56,28 @@ def create_transaction():
     except (TypeError, ValueError):
         return api_error("Date must be in YYYY-MM-DD format.")
 
+    ensure_default_categories(user_id)
+
+    ai_prediction = predict_transaction_category(
+        title=title,
+        amount=amount,
+        transaction_type=transaction_type,
+        notes=notes,
+    )
+
+    predicted_category = None
+    if category_id is None:
+        predicted_category = Category.query.filter_by(user_id=user_id, name=ai_prediction.category_name).first()
+        if not predicted_category:
+            predicted_category = Category.query.filter_by(user_id=user_id, name="Other").first()
+
     category = None
     if category_id is not None:
         category = Category.query.filter_by(id=category_id, user_id=user_id).first()
         if not category:
             return api_error("Selected category does not exist.")
+    else:
+        category = predicted_category
 
     transaction = Transaction(
         user_id=user_id,
@@ -66,10 +87,23 @@ def create_transaction():
         transaction_type=transaction_type,
         date=parsed_date,
         notes=notes,
+        ai_category_name=ai_prediction.category_name,
+        ai_category_confidence=ai_prediction.confidence,
+        ai_category_source=ai_prediction.source,
+        ai_category_provider=ai_prediction.provider,
+        ai_category_reason=ai_prediction.fallback_reason,
     )
     db.session.add(transaction)
     db.session.commit()
-    return api_response({"transaction": transaction.to_dict()}, "Transaction created.", 201)
+    transaction_payload = transaction.to_dict()
+    return api_response(
+        {
+            "transaction": transaction_payload,
+            "ai_category": transaction_payload.get("ai_category"),
+        },
+        "Transaction created.",
+        201,
+    )
 
 
 @transactions_bp.put("/<int:transaction_id>")
