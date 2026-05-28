@@ -17,7 +17,7 @@ from app.config import Config
 from app.extensions import db
 from app.models import Category, Transaction
 from app.services.finance import ensure_default_categories, get_default_category_names
-from app.utils.gemini import generate_json_with_gemini, normalize_category_name
+from app.utils.gemini import generate_json_with_gemini, generate_json_with_gemini_image, normalize_category_name
 from app.utils.receipt_ocr import ReceiptOCRError, extract_text_with_tesseract, is_allowed_receipt_file
 from app.utils.security import parse_decimal
 
@@ -156,10 +156,89 @@ def _parse_gemini_payload(raw_text: str):
     cleaned = _clean_json_response(raw_text)
     if not cleaned:
         raise ValueError("Empty Gemini response.")
-    payload = json.loads(cleaned)
+    try:
+        payload = json.loads(cleaned)
+    except json.JSONDecodeError as exc:
+        try:
+            from flask import current_app
+            current_app.logger.warning("Gemini returned invalid JSON for receipt extraction; preview: %s", cleaned[:400])
+        except Exception:
+            pass
+        raise ValueError(f"Invalid JSON from Gemini: {exc.msg} (line {exc.lineno} col {exc.colno})") from exc
     if not isinstance(payload, dict):
         raise ValueError("Gemini response was not a JSON object.")
     return payload
+
+
+def _extract_receipt_payload_from_image(image_path: str, raw_text: str):
+    categories = get_default_category_names()
+    prompt = (
+        "You extract structured receipt data directly from the attached receipt image.\n"
+        "Return ONLY valid JSON. Do not wrap the output in markdown, prose, or code fences.\n"
+        "Use double quotes for every key and string value.\n"
+        "If a field is missing, use null.\n"
+        "The category must be one of the allowed categories below, or null if uncertain.\n"
+        "Allowed categories: "
+        f"{', '.join(categories)}\n\n"
+        "Return this JSON shape exactly:\n"
+        "{\n"
+        '  "merchant": string|null,\n'
+        '  "amount": number|null,\n'
+        '  "date": string|null,\n'
+        '  "category": string|null,\n'
+        '  "confidence": number|null\n'
+        "}\n"
+    )
+    gemini_result = generate_json_with_gemini_image(
+        prompt,
+        image_path,
+        api_key=Config.GEMINI_API_KEY,
+        model_name=Config.GEMINI_MODEL,
+        max_output_tokens=256,
+    )
+    try:
+        payload = _parse_gemini_payload(gemini_result.text)
+        parse_result = _normalize_receipt_parse(payload, raw_text)
+        return ReceiptParseResult(
+            merchant=parse_result.merchant,
+            amount=parse_result.amount,
+            date=parse_result.date,
+            category=parse_result.category,
+            confidence=parse_result.confidence,
+            provider=parse_result.provider,
+            raw_text=parse_result.raw_text,
+            raw_ai_response=gemini_result.text,
+        )
+    except ValueError as exc:
+        # Log and attempt a simpler rule-based fallback using whatever text we have
+        try:
+            from flask import current_app
+            current_app.logger.info("Gemini image parse failed, falling back to rule parser: %s", str(exc))
+            current_app.logger.debug("Gemini image raw response preview: %s", gemini_result.text[:800])
+        except Exception:
+            pass
+        fallback = _fallback_parse_receipt_text(raw_text)
+        return ReceiptParseResult(
+            merchant=fallback["merchant"],
+            amount=fallback["amount"],
+            date=fallback["date"],
+            category=fallback["category"],
+            confidence=fallback.get("confidence", 0.0),
+            provider=fallback.get("provider", "rules"),
+            raw_text=raw_text,
+            fallback_reason=f"Gemini image parse failed: {exc}",
+            raw_ai_response=gemini_result.text,
+        )
+    return ReceiptParseResult(
+        merchant=parse_result.merchant,
+        amount=parse_result.amount,
+        date=parse_result.date,
+        category=parse_result.category,
+        confidence=parse_result.confidence,
+        provider=parse_result.provider,
+        raw_text=parse_result.raw_text,
+        raw_ai_response=gemini_result.text,
+    )
 
 
 def _normalize_receipt_parse(payload, raw_text: str):
@@ -243,6 +322,7 @@ def scan_receipt_upload(upload_file, user_id: int):
     max_size = current_app.config.get("MAX_RECEIPT_UPLOAD_BYTES", Config.MAX_RECEIPT_UPLOAD_BYTES)
     temp_dir = tempfile.mkdtemp(prefix="rupeerocket_receipts_")
     temp_path = None
+    ocr_confidence = 0.0
 
     try:
         temp_path = str(Path(temp_dir) / f"{uuid.uuid4().hex}_{filename}")
@@ -254,48 +334,62 @@ def scan_receipt_upload(upload_file, user_id: int):
         if file_size > max_size:
             raise ReceiptScanError(f"Receipt image must be smaller than {Config.MAX_RECEIPT_UPLOAD_MB} MB.")
 
-        ocr_result = extract_text_with_tesseract(
-            temp_path,
-            min_confidence=current_app.config.get("RECEIPT_OCR_MIN_CONFIDENCE", Config.RECEIPT_OCR_MIN_CONFIDENCE),
-        )
-        raw_text = ocr_result.text
-
-        categories = get_default_category_names()
-        prompt = build_receipt_extraction_prompt(raw_text=raw_text, categories=categories)
-
         try:
-            gemini_result = generate_json_with_gemini(
-                prompt,
-                api_key=Config.GEMINI_API_KEY,
-                model_name=Config.GEMINI_MODEL,
-                max_output_tokens=256,
+            ocr_result = extract_text_with_tesseract(
+                temp_path,
+                min_confidence=current_app.config.get("RECEIPT_OCR_MIN_CONFIDENCE", Config.RECEIPT_OCR_MIN_CONFIDENCE),
             )
-            payload = _parse_gemini_payload(gemini_result.text)
-            parse_result = _normalize_receipt_parse(payload, raw_text)
-            parse_result = ReceiptParseResult(
-                merchant=parse_result.merchant,
-                amount=parse_result.amount,
-                date=parse_result.date,
-                category=parse_result.category,
-                confidence=parse_result.confidence or ocr_result.confidence,
-                provider=parse_result.provider,
-                raw_text=parse_result.raw_text,
-                raw_ai_response=gemini_result.text,
-            )
-        except Exception:
-            fallback_payload = _fallback_parse_receipt_text(raw_text)
-            parse_result = ReceiptParseResult(
-                merchant=fallback_payload["merchant"],
-                amount=fallback_payload["amount"],
-                date=fallback_payload["date"],
-                category=fallback_payload["category"],
-                confidence=ocr_result.confidence,
-                provider=fallback_payload["provider"],
-                raw_text=raw_text,
-                fallback_reason=fallback_payload.get("fallback_reason"),
-            )
+            raw_text = ocr_result.text
+            ocr_confidence = ocr_result.confidence
 
-        transaction = _persist_transaction(user_id, parse_result, ocr_confidence=ocr_result.confidence)
+            categories = get_default_category_names()
+            prompt = build_receipt_extraction_prompt(raw_text=raw_text, categories=categories)
+
+            try:
+                gemini_result = generate_json_with_gemini(
+                    prompt,
+                    api_key=Config.GEMINI_API_KEY,
+                    model_name=Config.GEMINI_MODEL,
+                    max_output_tokens=256,
+                )
+                payload = _parse_gemini_payload(gemini_result.text)
+                parse_result = _normalize_receipt_parse(payload, raw_text)
+                parse_result = ReceiptParseResult(
+                    merchant=parse_result.merchant,
+                    amount=parse_result.amount,
+                    date=parse_result.date,
+                    category=parse_result.category,
+                    confidence=parse_result.confidence or ocr_result.confidence,
+                    provider=parse_result.provider,
+                    raw_text=parse_result.raw_text,
+                    raw_ai_response=gemini_result.text,
+                )
+            except Exception:
+                fallback_payload = _fallback_parse_receipt_text(raw_text)
+                parse_result = ReceiptParseResult(
+                    merchant=fallback_payload["merchant"],
+                    amount=fallback_payload["amount"],
+                    date=fallback_payload["date"],
+                    category=fallback_payload["category"],
+                    confidence=ocr_result.confidence,
+                    provider=fallback_payload["provider"],
+                    raw_text=raw_text,
+                    fallback_reason=fallback_payload.get("fallback_reason"),
+                )
+        except ReceiptOCRError:
+            if not Config.GEMINI_API_KEY:
+                raise ReceiptScanError(
+                    "Receipt OCR is unavailable on this machine. Set TESSERACT_CMD or configure GEMINI_API_KEY to enable image-based extraction."
+                )
+            try:
+                parse_result = _extract_receipt_payload_from_image(temp_path, raw_text="")
+                ocr_confidence = parse_result.confidence or 0.0
+            except ReceiptScanError:
+                raise
+            except Exception as exc:
+                raise ReceiptScanError(f"Receipt image extraction failed: {exc}") from exc
+
+        transaction = _persist_transaction(user_id, parse_result, ocr_confidence=ocr_confidence)
 
         return {
             "receipt": {

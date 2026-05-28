@@ -28,7 +28,7 @@ export function AnalyticsPage() {
       const [analyticsData, trendData, insightData] = await Promise.all([
         getMonthlyAnalytics(monthValue),
         getDashboardTrend(),
-        getAiInsights(),
+        getAiInsights(monthValue),
       ])
       setAnalytics(analyticsData)
       setTrend(trendData)
@@ -85,10 +85,10 @@ export function AnalyticsPage() {
             <div className="mt-4 grid gap-4 md:grid-cols-2">
               {(insights.length ? insights : ['Keep tracking transactions to unlock more predictions.']).slice(0, 4).map((item, index) => (
                 <AIInsightCard
-                  key={typeof item === 'string' ? item : item}
-                  title={typeof item === 'string' ? 'Prediction' : `Insight ${index + 1}`}
-                  message={typeof item === 'string' ? item : item}
-                  badge={index === 0 ? 'AI summary' : 'Prediction'}
+                  key={typeof item === 'string' ? item : item.title || item.message || index}
+                  title={typeof item === 'string' ? 'Prediction' : item.title || `Insight ${index + 1}`}
+                  message={typeof item === 'string' ? item : item.message || ''}
+                  badge={typeof item === 'string' ? (index === 0 ? 'AI summary' : 'Prediction') : item.badge || (index === 0 ? 'AI summary' : 'Prediction')}
                 />
               ))}
             </div>

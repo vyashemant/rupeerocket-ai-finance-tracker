@@ -13,11 +13,21 @@ import { ReceiptIcon, PlusIcon, SparklesIcon } from '../../components/ui/Icons'
 import { getAiInsights, getDashboardSummary, getDashboardTrend } from '../../services/dashboard'
 
 function mapInsights(insights) {
-  return (insights || []).map((message, index) => ({
-    title: index === 0 ? 'AI recommendation' : 'Opportunity',
-    message,
-    badge: index === 0 ? 'Recommendation' : 'Insight',
-  }))
+  return (insights || []).map((item, index) => {
+    if (item && typeof item === 'object') {
+      return {
+        title: item.title || (index === 0 ? 'AI recommendation' : 'Opportunity'),
+        message: item.message || '',
+        badge: item.badge || (index === 0 ? 'Recommendation' : 'Insight'),
+      }
+    }
+
+    return {
+      title: index === 0 ? 'AI recommendation' : 'Opportunity',
+      message: String(item || ''),
+      badge: index === 0 ? 'Recommendation' : 'Insight',
+    }
+  })
 }
 
 export function DashboardPage() {

@@ -1,5 +1,5 @@
 from flask import Blueprint, request
-from flask_jwt_extended import create_access_token, get_jwt_identity, jwt_required
+from flask_jwt_extended import create_access_token, create_refresh_token, get_jwt_identity, jwt_required
 
 from app.middleware.validators import validate_json
 
@@ -36,8 +36,9 @@ def register():
 
     ensure_default_categories(user.id)
 
-    token = create_access_token(identity=str(user.id), additional_claims={"email": user.email})
-    return api_response({"token": token, "user": user.to_dict()}, "Account created.", 201)
+    access_token = create_access_token(identity=str(user.id), additional_claims={"email": user.email})
+    refresh_token = create_refresh_token(identity=str(user.id), additional_claims={"email": user.email})
+    return api_response({"token": access_token, "refresh_token": refresh_token, "user": user.to_dict()}, "Account created.", 201)
 
 
 @auth_bp.post("/login")
@@ -52,8 +53,19 @@ def login():
         return api_error("Invalid email or password.", 401)
 
     ensure_default_categories(user.id)
-    token = create_access_token(identity=str(user.id), additional_claims={"email": user.email})
-    return api_response({"token": token, "user": user.to_dict()}, "Signed in successfully.")
+    access_token = create_access_token(identity=str(user.id), additional_claims={"email": user.email})
+    refresh_token = create_refresh_token(identity=str(user.id), additional_claims={"email": user.email})
+    return api_response({"token": access_token, "refresh_token": refresh_token, "user": user.to_dict()}, "Signed in successfully.")
+
+
+@auth_bp.post("/refresh")
+@jwt_required(refresh=True)
+def refresh():
+    user_id = int(get_jwt_identity())
+    user = User.query.get_or_404(user_id)
+    access_token = create_access_token(identity=str(user.id), additional_claims={"email": user.email})
+    refresh_token = create_refresh_token(identity=str(user.id), additional_claims={"email": user.email})
+    return api_response({"token": access_token, "refresh_token": refresh_token, "user": user.to_dict()})
 
 
 @auth_bp.get("/me")

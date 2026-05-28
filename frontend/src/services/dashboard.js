@@ -39,31 +39,54 @@ export async function uploadReceipt(file, onUploadProgress) {
   return extractData(response)
 }
 
-export async function getAiInsights() {
-  const response = await api.get('/api/ai/insights')
+export async function getAiInsights(month) {
+  const response = await api.get('/api/ai/insights', { params: month ? { month } : undefined })
   const insight = extractData(response).insights || {}
   if (Array.isArray(insight)) {
     return insight
   }
 
-  const cards = []
-  if (insight.summary_text) {
-    cards.push(insight.summary_text)
+  let parsed = null
+  if (typeof insight.insights_text === 'string') {
+    try {
+      parsed = JSON.parse(insight.insights_text)
+    } catch (_error) {
+      parsed = null
+    }
   }
 
-  try {
-    const parsed = typeof insight.insights_text === 'string' ? JSON.parse(insight.insights_text) : null
-    if (parsed && Array.isArray(parsed.highlights)) {
-      cards.push(...parsed.highlights)
-    }
-    if (parsed && Array.isArray(parsed.recommendations)) {
-      cards.push(...parsed.recommendations)
-    }
-  } catch (_error) {
-    if (insight.insights_text) {
-      cards.push(insight.insights_text)
-    }
-  }
+  const summary = typeof insight.summary_text === 'string' && insight.summary_text.trim()
+    ? insight.summary_text.trim()
+    : typeof parsed?.summary === 'string' && parsed.summary.trim()
+      ? parsed.summary.trim()
+      : 'No AI insights available.'
+
+  const highlights = Array.isArray(parsed?.highlights) ? parsed.highlights.filter(Boolean).map((item) => String(item).trim()).filter(Boolean) : []
+  const recommendations = Array.isArray(parsed?.recommendations) ? parsed.recommendations.filter(Boolean).map((item) => String(item).trim()).filter(Boolean) : []
+
+  const cards = [
+    {
+      title: 'AI summary',
+      message: summary,
+      badge: 'Summary',
+    },
+  ]
+
+  highlights.slice(0, 2).forEach((message, index) => {
+    cards.push({
+      title: index === 0 ? 'Top highlight' : 'Insight',
+      message,
+      badge: 'Highlight',
+    })
+  })
+
+  recommendations.slice(0, 2).forEach((message, index) => {
+    cards.push({
+      title: index === 0 ? 'Next action' : 'Recommendation',
+      message,
+      badge: 'Action',
+    })
+  })
 
   return cards
 }

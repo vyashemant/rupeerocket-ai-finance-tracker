@@ -1,5 +1,6 @@
 import os
 import re
+from pathlib import Path
 from dataclasses import dataclass
 
 
@@ -88,6 +89,44 @@ def generate_json_with_gemini(prompt, *, api_key=None, model_name=None, max_outp
     response = client.models.generate_content(
         model=model_name,
         contents=prompt,
+        config=cfg,
+    )
+    response_text = extract_response_text(response)
+    return GeminiTextResult(text=response_text, raw_response=str(response))
+
+
+def generate_json_with_gemini_image(prompt, image_path, *, api_key=None, model_name=None, max_output_tokens=None):
+    api_key = api_key if api_key is not None else get_gemini_api_key()
+    model_name = model_name if model_name is not None else get_gemini_model_name()
+    client = create_gemini_client(api_key)
+    cfg = {
+        "temperature": 0,
+        "top_p": 1,
+        "top_k": 1,
+        "response_mime_type": "application/json",
+    }
+    if max_output_tokens is not None:
+        cfg["max_output_tokens"] = int(max_output_tokens)
+    else:
+        cfg["max_output_tokens"] = 256
+
+    image_bytes = Path(image_path).read_bytes()
+    mime_type = "image/png"
+    suffix = Path(image_path).suffix.lower()
+    if suffix in {".jpg", ".jpeg"}:
+        mime_type = "image/jpeg"
+
+    try:
+        from google.genai import types
+    except ImportError as exc:
+        raise RuntimeError("google-genai types helpers are not available.") from exc
+
+    response = client.models.generate_content(
+        model=model_name,
+        contents=[
+            prompt,
+            types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
+        ],
         config=cfg,
     )
     response_text = extract_response_text(response)

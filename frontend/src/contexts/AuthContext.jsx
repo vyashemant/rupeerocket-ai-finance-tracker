@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react'
-import { clearAuthToken, getAuthToken, setAuthToken } from '../lib/storage'
+import { clearStoredAuth, getAuthToken, setAuthTokens } from '../lib/storage'
 import { getProfileRequest, loginRequest, registerRequest } from '../services/auth'
 
 const AuthContext = createContext(null)
@@ -31,21 +31,21 @@ export function AuthProvider({ children }) {
   }, [])
 
   const login = async (email, password) => {
-    const { token, user: nextUser } = await loginRequest({ email, password })
-    setAuthToken(token)
+    const { token, refresh_token: refreshToken, user: nextUser } = await loginRequest({ email, password })
+    setAuthTokens(token, refreshToken)
     setUser(nextUser)
     return nextUser
   }
 
   const register = async (payload) => {
-    const { token, user: nextUser } = await registerRequest(payload)
-    setAuthToken(token)
+    const { token, refresh_token: refreshToken, user: nextUser } = await registerRequest(payload)
+    setAuthTokens(token, refreshToken)
     setUser(nextUser)
     return nextUser
   }
 
   const logout = () => {
-    clearAuthToken()
+    clearStoredAuth()
     setUser(null)
   }
 
