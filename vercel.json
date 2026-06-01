@@ -1,5 +1,17 @@
 {
   "version": 2,
+  "experimentalServices": {
+    "frontend": {
+      "root": "frontend",
+      "rootDirectory": "/",
+      "framework": "vite"
+    },
+    "backend": {
+      "root": "backend",
+      "rootDirectory": "/backend",
+      "framework": "flask"
+    }
+  },
   "builds": [
     {
       "src": "frontend/package.json",
