@@ -43,7 +43,14 @@ export function ReceiptScannerPage() {
       const response = await uploadReceipt(file)
       setResult(response)
     } catch (requestError) {
-      setError(requestError?.response?.data?.message || 'Unable to process the receipt.')
+      const message = requestError?.response?.data?.message || 'Unable to process the receipt.'
+      const details = requestError?.response?.data?.details
+      const detailText = details?.ocr_text_preview
+        ? ` OCR read: ${details.ocr_text_preview}`
+        : details?.reason
+          ? ` ${details.reason}`
+          : ''
+      setError(`${message}${detailText}`)
     } finally {
       setUploading(false)
     }

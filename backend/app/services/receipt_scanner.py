@@ -48,6 +48,8 @@ def _clean_json_response(raw_text: str) -> str:
     if cleaned.startswith("```"):
         cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(r"\s*```$", "", cleaned)
+    if "{" in cleaned and "}" in cleaned:
+        cleaned = cleaned[cleaned.find("{") : cleaned.rfind("}") + 1]
     return cleaned.strip()
 
 
@@ -80,6 +82,50 @@ def _extract_date_string(value):
     return datetime.utcnow().date().isoformat()
 
 
+def _decimal_from_ocr_number(value: str):
+    cleaned = re.sub(r"[^\d.,]", "", str(value or ""))
+    if not cleaned:
+        return None
+
+    if "," in cleaned and "." not in cleaned:
+        parts = cleaned.split(",")
+        if len(parts[-1]) in {1, 2}:
+            cleaned = "".join(parts[:-1]) + "." + parts[-1]
+        else:
+            cleaned = cleaned.replace(",", "")
+    else:
+        cleaned = cleaned.replace(",", "")
+
+    return parse_decimal(cleaned)
+
+
+def _parse_receipt_amount(raw_text: str):
+    amount_pattern = r"(?:rs\.?|inr|₹)?\s*([0-9][0-9,]*(?:[.,][0-9]{1,2})?)"
+    total_patterns = [
+        rf"(?:grand\s+total|invoice\s+amount|total\s+invoice\s+amount|net\s+amount|amount\s+paid|amount|total\s+amount|balance\s+due|total)\D{{0,30}}{amount_pattern}",
+        rf"{amount_pattern}\D{{0,30}}(?:grand\s+total|invoice\s+amount|total\s+invoice\s+amount|net\s+amount|amount\s+paid|amount|total\s+amount|balance\s+due|total)",
+    ]
+
+    for pattern in total_patterns:
+        matches = re.findall(pattern, raw_text, flags=re.IGNORECASE)
+        if not matches:
+            continue
+        value = matches[-1]
+        if isinstance(value, tuple):
+            value = next((part for part in value if part), "")
+        amount = _decimal_from_ocr_number(value)
+        if amount is not None and amount > 0:
+            return amount
+
+    candidates = []
+    for match in re.finditer(amount_pattern, raw_text, flags=re.IGNORECASE):
+        amount = _decimal_from_ocr_number(match.group(1))
+        if amount is not None and 0 < amount < Decimal("10000000"):
+            candidates.append(amount)
+
+    return max(candidates) if candidates else None
+
+
 def _fallback_parse_receipt_text(raw_text: str):
     normalized_text = (raw_text or "").strip()
     merchant = normalized_text.splitlines()[0].strip() if normalized_text else "Receipt"
@@ -89,7 +135,8 @@ def _fallback_parse_receipt_text(raw_text: str):
         normalized_text,
         flags=re.IGNORECASE,
     )
-    amount = parse_decimal(amount_match[-1].replace(",", "")) if amount_match else None
+    amount = _decimal_from_ocr_number(amount_match[-1]) if amount_match else None
+    amount = _parse_receipt_amount(normalized_text) or amount
 
     date_patterns = [
         r"\b\d{4}-\d{2}-\d{2}\b",
@@ -108,7 +155,7 @@ def _fallback_parse_receipt_text(raw_text: str):
     category = "Other"
     category_keywords = {
         "Food": ["restaurant", "pizza", "meal", "dinner", "lunch", "breakfast", "cafe", "food", "swiggy", "zomato"],
-        "Travel": ["uber", "ola", "cab", "taxi", "fuel", "metro", "train", "bus", "flight"],
+        "Travel": ["uber", "ola", "cab", "taxi", "fuel", "petrol", "diesel", "metro", "train", "bus", "flight"],
         "Shopping": ["mall", "store", "amazon", "flipkart", "purchase", "shopping"],
         "Bills": ["bill", "recharge", "electricity", "water", "gas", "internet"],
         "Health": ["pharmacy", "medical", "hospital", "doctor", "clinic"],
@@ -127,6 +174,17 @@ def _fallback_parse_receipt_text(raw_text: str):
         "provider": "rules",
         "fallback_reason": "Gemini parsing was unavailable or returned invalid JSON.",
     }
+
+
+def _receipt_failure_details(raw_text="", reason=None):
+    details = {}
+    if reason:
+        details["reason"] = str(reason)
+    if raw_text:
+        details["ocr_text_preview"] = re.sub(r"\s+", " ", raw_text).strip()[:500]
+    details["gemini_model"] = Config.GEMINI_MODEL
+    details["gemini_configured"] = bool(Config.GEMINI_API_KEY)
+    return details
 
 
 def build_receipt_extraction_prompt(*, raw_text: str, categories):
@@ -218,6 +276,8 @@ def _extract_receipt_payload_from_image(image_path: str, raw_text: str):
         except Exception:
             pass
         fallback = _fallback_parse_receipt_text(raw_text)
+        if fallback["amount"] is None:
+            raise ReceiptScanError("Could not determine the receipt total amount.")
         return ReceiptParseResult(
             merchant=fallback["merchant"],
             amount=fallback["amount"],
@@ -243,27 +303,28 @@ def _extract_receipt_payload_from_image(image_path: str, raw_text: str):
 
 def _normalize_receipt_parse(payload, raw_text: str):
     default_categories = get_default_category_names()
+    fallback_payload = _fallback_parse_receipt_text(raw_text)
     merchant_value = payload.get("merchant")
     merchant = merchant_value.strip() if isinstance(merchant_value, str) else merchant_value
     if not merchant:
-        merchant = _fallback_parse_receipt_text(raw_text)["merchant"]
+        merchant = fallback_payload["merchant"]
 
     amount = parse_decimal(payload.get("amount"))
     if amount is None or amount <= 0:
-        amount = _fallback_parse_receipt_text(raw_text)["amount"]
+        amount = fallback_payload["amount"]
     if amount is None or amount <= 0:
         raise ReceiptScanError("Could not determine the receipt total amount.")
 
     date_value = payload.get("date")
     parsed_date = _parse_receipt_date(date_value)
     if not parsed_date:
-        parsed_date = _parse_receipt_date(_fallback_parse_receipt_text(raw_text)["date"])
+        parsed_date = _parse_receipt_date(fallback_payload["date"])
     if not parsed_date:
         parsed_date = datetime.utcnow().date()
 
     category_name = normalize_category_name(payload.get("category"), default_categories)
     if not category_name:
-        category_name = _fallback_parse_receipt_text(raw_text)["category"]
+        category_name = fallback_payload["category"]
     if category_name not in default_categories:
         category_name = "Other"
 
@@ -366,16 +427,31 @@ def scan_receipt_upload(upload_file, user_id: int):
                 )
             except Exception:
                 fallback_payload = _fallback_parse_receipt_text(raw_text)
-                parse_result = ReceiptParseResult(
-                    merchant=fallback_payload["merchant"],
-                    amount=fallback_payload["amount"],
-                    date=fallback_payload["date"],
-                    category=fallback_payload["category"],
-                    confidence=ocr_result.confidence,
-                    provider=fallback_payload["provider"],
-                    raw_text=raw_text,
-                    fallback_reason=fallback_payload.get("fallback_reason"),
-                )
+                if fallback_payload["amount"] is None:
+                    if Config.GEMINI_API_KEY:
+                        try:
+                            parse_result = _extract_receipt_payload_from_image(temp_path, raw_text=raw_text)
+                        except Exception as exc:
+                            raise ReceiptScanError(
+                                "Could not determine the receipt total amount.",
+                                details=_receipt_failure_details(raw_text, exc),
+                            ) from exc
+                    else:
+                        raise ReceiptScanError(
+                            "Could not determine the receipt total amount.",
+                            details=_receipt_failure_details(raw_text, "Gemini image extraction is not configured."),
+                        )
+                else:
+                    parse_result = ReceiptParseResult(
+                        merchant=fallback_payload["merchant"],
+                        amount=fallback_payload["amount"],
+                        date=fallback_payload["date"],
+                        category=fallback_payload["category"],
+                        confidence=ocr_result.confidence,
+                        provider=fallback_payload["provider"],
+                        raw_text=raw_text,
+                        fallback_reason=fallback_payload.get("fallback_reason"),
+                    )
         except ReceiptOCRError:
             if not Config.GEMINI_API_KEY:
                 raise ReceiptScanError(
@@ -387,7 +463,10 @@ def scan_receipt_upload(upload_file, user_id: int):
             except ReceiptScanError:
                 raise
             except Exception as exc:
-                raise ReceiptScanError(f"Receipt image extraction failed: {exc}") from exc
+                raise ReceiptScanError(
+                    "Receipt image extraction failed.",
+                    details=_receipt_failure_details(reason=exc),
+                ) from exc
 
         transaction = _persist_transaction(user_id, parse_result, ocr_confidence=ocr_confidence)
 
@@ -397,7 +476,7 @@ def scan_receipt_upload(upload_file, user_id: int):
                 "amount": float(parse_result.amount),
                 "date": parse_result.date,
                 "category": parse_result.category,
-                "ocr_confidence": ocr_result.confidence,
+                "ocr_confidence": round(ocr_confidence, 2),
                 "transaction_id": transaction.id,
             },
             "transaction": transaction.to_dict(),

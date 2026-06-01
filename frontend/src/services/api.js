@@ -30,6 +30,8 @@ async function refreshSession() {
   return session.token
 }
 
+export { refreshSession }
+
 api.interceptors.request.use((config) => {
   const token = getAuthToken()
   if (token) {

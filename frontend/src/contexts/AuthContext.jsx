@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react'
 import { clearStoredAuth, getAuthToken, setAuthTokens } from '../lib/storage'
 import { getProfileRequest, loginRequest, registerRequest } from '../services/auth'
+import { refreshSession } from '../services/api'
 
 const AuthContext = createContext(null)
 
@@ -19,7 +20,20 @@ export function AuthProvider({ children }) {
       const profile = await getProfileRequest()
       setUser(profile?.user || profile)
     } catch (error) {
-      clearAuthToken()
+      const refreshToken = localStorage.getItem('rupeerocket_refresh_token')
+      if (refreshToken) {
+        try {
+          await refreshSession()
+          const refreshedProfile = await getProfileRequest()
+          setUser(refreshedProfile?.user || refreshedProfile)
+          setLoading(false)
+          return
+        } catch (_refreshError) {
+          // fall through to clear the stale session
+        }
+      }
+
+      clearStoredAuth()
       setUser(null)
     } finally {
       setLoading(false)

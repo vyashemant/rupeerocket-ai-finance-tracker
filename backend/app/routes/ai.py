@@ -15,12 +15,13 @@ ai_bp = Blueprint("ai", __name__, url_prefix="/api/ai")
 def insights():
     user_id = int(get_jwt_identity())
     month = request.args.get("month")
+    force_refresh = str(request.args.get("force", "")).lower() in {"1", "true", "yes"}
     if month:
         try:
             target = datetime.strptime(month, "%Y-%m")
         except ValueError:
             return api_error("Month must be formatted as YYYY-MM.")
-        insights = generate_ai_insights_for_month(user_id, target.year, target.month)
+        insights = generate_ai_insights_for_month(user_id, target.year, target.month, force_refresh=force_refresh)
     else:
-        insights = generate_ai_insights(user_id)
+        insights = generate_ai_insights(user_id, force_refresh=force_refresh)
     return api_response({"insights": insights})

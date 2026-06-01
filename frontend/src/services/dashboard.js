@@ -39,8 +39,13 @@ export async function uploadReceipt(file, onUploadProgress) {
   return extractData(response)
 }
 
-export async function getAiInsights(month) {
-  const response = await api.get('/api/ai/insights', { params: month ? { month } : undefined })
+export async function getAiInsights(month, options = {}) {
+  const params = {
+    _t: Date.now(),
+    ...(month ? { month } : {}),
+    ...(options.force ? { force: 'true' } : {}),
+  }
+  const response = await api.get('/api/ai/insights', { params })
   const insight = extractData(response).insights || {}
   if (Array.isArray(insight)) {
     return insight

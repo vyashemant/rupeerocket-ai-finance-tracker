@@ -78,6 +78,31 @@ def _configure_tesseract_binary(pytesseract):
     return None
 
 
+def _result_from_tesseract_data(data) -> OCRResult:
+    words_by_line = {}
+    confidences = []
+    line_keys = zip(
+        data.get("block_num", []),
+        data.get("par_num", []),
+        data.get("line_num", []),
+    )
+    for text, conf, line_key in zip(data.get("text", []), data.get("conf", []), line_keys):
+        cleaned = (text or "").strip()
+        if not cleaned:
+            continue
+        try:
+            confidence = float(conf)
+        except (TypeError, ValueError):
+            confidence = -1.0
+        if confidence > 0:
+            confidences.append(confidence)
+        words_by_line.setdefault(line_key, []).append(cleaned)
+
+    raw_text = "\n".join(" ".join(words) for words in words_by_line.values()).strip()
+    average_confidence = mean(confidences) if confidences else 0.0
+    return OCRResult(text=raw_text, confidence=round(average_confidence, 2))
+
+
 def extract_text_with_tesseract(image_path: str, *, min_confidence: float = 45.0) -> OCRResult:
     try:
         import pytesseract
@@ -93,35 +118,30 @@ def extract_text_with_tesseract(image_path: str, *, min_confidence: float = 45.0
                 "C:\\Program Files\\Tesseract-OCR\\tesseract.exe."
             )
         image = load_and_preprocess_receipt_image(image_path)
-        data = pytesseract.image_to_data(
-            image,
-            output_type=pytesseract.Output.DICT,
-            config="--oem 3 --psm 6",
-            lang="eng",
-        )
+        results = []
+        for config in ("--oem 3 --psm 6", "--oem 3 --psm 4", "--oem 3 --psm 11"):
+            data = pytesseract.image_to_data(
+                image,
+                output_type=pytesseract.Output.DICT,
+                config=config,
+                lang="eng",
+            )
+            result = _result_from_tesseract_data(data)
+            if result.text:
+                results.append(result)
     except pytesseract.TesseractNotFoundError as exc:
         raise ReceiptOCRError("Tesseract OCR is not installed or not available on PATH.") from exc
     except Exception as exc:
         raise ReceiptOCRError("Receipt OCR failed during text extraction.") from exc
 
-    words = []
-    confidences = []
-    for text, conf in zip(data.get("text", []), data.get("conf", [])):
-        cleaned = (text or "").strip()
-        if not cleaned:
-            continue
-        try:
-            confidence = float(conf)
-        except (TypeError, ValueError):
-            confidence = -1.0
-        if confidence > 0:
-            confidences.append(confidence)
-        words.append(cleaned)
-
-    raw_text = " ".join(words).strip()
-    average_confidence = mean(confidences) if confidences else 0.0
-
-    if not raw_text or average_confidence < min_confidence:
+    if not results:
         raise ReceiptOCRError("The receipt image appears blurry or unreadable. Please upload a clearer image.")
 
-    return OCRResult(text=raw_text, confidence=round(average_confidence, 2))
+    result = max(results, key=lambda item: (item.confidence, len(item.text)))
+    has_money_like_text = any(token in result.text.lower() for token in ("total", "amount", "rs", "inr"))
+    confidence_floor = min_confidence if not has_money_like_text else min(min_confidence, 25.0)
+
+    if result.confidence < confidence_floor:
+        raise ReceiptOCRError("The receipt image appears blurry or unreadable. Please upload a clearer image.")
+
+    return result

@@ -35,7 +35,7 @@ export function UploadZone({ onFileSelect, previewUrl, loading, helperText = 'Up
           <Button onClick={openPicker} disabled={loading}>{loading ? 'Processing...' : 'Choose file'}</Button>
           {previewUrl ? <span className="rounded-2xl border border-border bg-surface px-4 py-3 text-sm text-muted">Image loaded</span> : null}
         </div>
-        <input ref={inputRef} type="file" accept="image/png,image/jpeg,image/jpg" className="hidden" onChange={handleChange} />
+        <input ref={inputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleChange} />
       </div>
     </Card>
   )

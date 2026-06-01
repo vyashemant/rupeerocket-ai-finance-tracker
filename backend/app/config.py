@@ -7,6 +7,15 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+def normalize_gemini_model(model_name):
+    model = (model_name or "").strip()
+    deprecated_aliases = {
+        "gemini-3.5-flash": "gemini-2.5-flash",
+        "gemini-3.5-pro": "gemini-2.5-pro",
+    }
+    return deprecated_aliases.get(model, model or "gemini-2.5-flash")
+
+
 class Config:
     SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key")
     JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", SECRET_KEY)
@@ -14,7 +23,7 @@ class Config:
     JWT_REFRESH_TOKEN_EXPIRES = timedelta(days=int(os.getenv("JWT_REFRESH_TOKEN_DAYS", "30")))
     JWT_TOKEN_LOCATION = ["headers"]
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-    GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
+    GEMINI_MODEL = normalize_gemini_model(os.getenv("GEMINI_MODEL", "gemini-2.5-flash"))
     TESSERACT_CMD = os.getenv("TESSERACT_CMD", "")
     SQLALCHEMY_DATABASE_URI = os.getenv("DATABASE_URL", "sqlite:///rupeerocket.db")
     SQLALCHEMY_TRACK_MODIFICATIONS = False

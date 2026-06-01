@@ -14,8 +14,13 @@ def get_gemini_api_key():
     return os.getenv("GEMINI_API_KEY", "").strip()
 
 
-def get_gemini_model_name(default_model="gemini-3.5-flash"):
-    return os.getenv("GEMINI_MODEL", default_model).strip() or default_model
+def get_gemini_model_name(default_model="gemini-2.5-flash"):
+    model_name = os.getenv("GEMINI_MODEL", default_model).strip() or default_model
+    deprecated_aliases = {
+        "gemini-3.5-flash": "gemini-2.5-flash",
+        "gemini-3.5-pro": "gemini-2.5-pro",
+    }
+    return deprecated_aliases.get(model_name, model_name)
 
 
 def create_gemini_client(api_key):
@@ -166,7 +171,14 @@ def normalize_category_name(value, allowed_categories):
         return allowed_lookup[cleaned]
 
     first_line = cleaned.splitlines()[0].strip()
-    return allowed_lookup.get(first_line)
+    if first_line in allowed_lookup:
+        return allowed_lookup[first_line]
+
+    for allowed_key, category in allowed_lookup.items():
+        if re.search(rf"\b{re.escape(allowed_key)}\b", cleaned):
+            return category
+
+    return None
 
 
 def keyword_category_match(text, keyword_rules):

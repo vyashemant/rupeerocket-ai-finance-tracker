@@ -25,14 +25,27 @@ export function AnalyticsPage() {
     setLoading(true)
     setError('')
     try {
-      const [analyticsData, trendData, insightData] = await Promise.all([
+      const [analyticsData, trendData, insightData] = await Promise.allSettled([
         getMonthlyAnalytics(monthValue),
         getDashboardTrend(),
-        getAiInsights(monthValue),
+        getAiInsights(monthValue, { force: true }),
       ])
-      setAnalytics(analyticsData)
-      setTrend(trendData)
-      setInsights(insightData)
+
+      if (analyticsData.status === 'fulfilled') {
+        setAnalytics(analyticsData.value)
+      }
+      if (trendData.status === 'fulfilled') {
+        setTrend(trendData.value)
+      }
+      if (insightData.status === 'fulfilled') {
+        setInsights(insightData.value)
+      } else {
+        setInsights([])
+      }
+
+      if (analyticsData.status === 'rejected' || trendData.status === 'rejected') {
+        throw analyticsData.reason || trendData.reason
+      }
     } catch (requestError) {
       setError(requestError?.response?.data?.message || 'Unable to load analytics.')
     } finally {
