@@ -259,3 +259,29 @@ If Tesseract is installed outside PATH on Windows, set `TESSERACT_CMD` to the fu
 - The backend auto-creates tables in development for a quick start, but the app is structured for migrations in production.
 - The AI layer is intentionally isolated so it can be replaced later without touching the UI or core finance routes.
 - If Gemini is unavailable or the key is missing, the backend falls back to deterministic keyword rules and still stores the predicted category metadata.
+
+## Deploying the Frontend to Vercel
+
+This repository contains a Vite React frontend in the `frontend/` folder and a Flask backend in `backend/`. The included `vercel.json` is configured to build and deploy the frontend only. The backend is excluded via `.vercelignore` and should be deployed separately (Render, Railway, Fly, etc.) or converted to serverless functions later.
+
+Quick steps to deploy the frontend on Vercel:
+
+1. Install Vercel CLI (optional):
+
+```
+npm i -g vercel
+```
+
+2. From the repository root run:
+
+```
+cd frontend
+npm install
+vercel --prod
+```
+
+3. In the Vercel dashboard, set the project environment variable `VITE_API_BASE_URL` to the URL of your backend API.
+
+Notes:
+- The `vercel.json` uses `frontend/package.json` with `@vercel/static-build` to run `npm run build` and serve the `dist` output as a static site.
+- If you want to host the Flask backend on Vercel, it needs to be refactored into Vercel serverless functions or deployed to a separate platform.
